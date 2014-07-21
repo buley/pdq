@@ -1,8 +1,30 @@
 # Agent
 
-# AWS key/secret
-# do(message) -> decorated Q Promise
-# notify(), error(), then(), etc. + start(), stop(), pause()
+###
+
+var agent = Agent( function( task ) {
+  console.log( data.foo );
+} ).task( { foo: "bar" } ).then( function() {
+  console.log( "bar finished" );
+} ).task( { foo: "baz" } ).then( function() {
+  console.log( "baz finished" );
+} ).start().then( function() {
+  console.log('agent started');
+  setTimeout( function() {
+    agent.stop().then(function() {
+      console.log( "agent stopped" );
+    });
+  }, 10000 );
+} );
+
+> agent started
+> bar
+> bar finished
+> baz
+> baz finished
+> agent stopped
+
+###
 
 Q = require('Q')
 Queues = require('lib/queues.coffee')
