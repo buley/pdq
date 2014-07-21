@@ -1,0 +1,24 @@
+{
+  "name": "pdq",
+  "version": "0.0.0",
+  "description": "A paced distributed queue.",
+  "main": "index.js",
+  "scripts": {
+    "test": "coffee example.coffee"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/buley/pdq"
+  },
+  "keywords": [
+    "queue",
+    "aws",
+    "sqs"
+  ],
+  "author": "Taylor Buley",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/buley/pdq/issues"
+  },
+  "homepage": "https://github.com/buley/pdq"
+}
