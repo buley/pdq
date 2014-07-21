@@ -1,4 +1,4 @@
-# PDQ
+# Agent
 
 # AWS key/secret
 # do(message) -> decorated Q Promise
@@ -6,29 +6,41 @@
 
 Q = require('Q')
 Queues = require('lib/queues.coffee')
-Threads = require('lib/threads.coffee')
+Threads = require('lib/thread.coffee')
 
-PDQ = (config) ->
-  # pretty dang queue
+Agent = (fn, config) ->
 
-  # lazy queue initialization
+  # Config contains Queue configuration
+  config ?= @config
+  config ?= {}
+
+  deferred = Q.defer()
+  promise = deferred.promise
+
+  # Cached (or lazily loaded) references
   @queue = () ->
-    # Determined Queue name and initialization state
-    # If Queue w/thread name not yet initialized:
-      # Check if queue with task name already exists (first memory cache then AWS)
-      # If task queue doesn't yet exist in memory or on AWS:
-        # Create Queue from thread name
-      # Create a new Thread, passing it queue ARN
-    # Return Queue
-
-  # lazy thread initialization
+    null
   @thread = () ->
-    thread = null
-    # Determine Thread name and initialization state
-    # If Thread w/thread name not yet intialized:
-      # Lazy queue initialization
-    # return Thread
-    thread
+    null
+
+  # This method returns a array pair of types [ Thread, Queue ]
+  @agent = () ->
+    deferred = Q.defer()
+    # Pull out relevant vars from config
+    # Determine Thread fingerprint and state
+    # If Thread not yet intialized:
+      # If Queue not yet initialized:
+        # Determined Queue name and initialization state
+        # If Queue w/thread name not yet initialized:
+          # Check if queue with task name already exists (first memory cache then AWS)
+          # If task queue doesn't yet exist in memory or on AWS:
+          # Create Queue from thread name
+          # Create a new Thread, passing it queue ARN
+          # Return [ Thread, Queue ]
+        # Else, return [ Thread, Queue ]e
+      # Else, return [ Thread, Queue ]
+    # Else, return [ Thread, Queue ]
+    deferred.promise
 
   # Begins a thread
   @start = () ->
@@ -36,7 +48,9 @@ PDQ = (config) ->
     console.log('Begins a thread, preserving any stats', Thread)
     deferred = Q.defer()
     Thread.start().then( () ->
-      deferred.resolve()
+      Thread.startStats().then( () ->
+        deferred.resolve()
+      )
     )
     deferred.promise
 
@@ -46,7 +60,9 @@ PDQ = (config) ->
     console.log('Stops a thread, preserving queues and stats', Thread)
     deferred = Q.defer()
     Thread.pause().then( () ->
-      deferred.resolve()
+      Thread.pauseStats().then( () ->
+        deferred.resolve()
+      )
     )
     deferred.promise
 
@@ -55,9 +71,13 @@ PDQ = (config) ->
     Thread = @thread()
     console.log('Begins a thread, resetting stats', Thread)
     deferred = Q.defer()
-    Thread.resetStats().then( () ->
-      Thread.start().then( () ->
-        deferred.resolve()
+    Thread.pauseStats().then( () ->
+      Thread.resetStats().then( () ->
+        Thread.startStats().then( () ->
+          Thread.start().then( () ->
+            deferred.resolve()
+          )
+        )
       )
     )
     deferred.promise
@@ -65,13 +85,16 @@ PDQ = (config) ->
   # Stops a thread, removing queues and resetting stats
   @stop = () ->
     Thread = @thread()
-    console.log('Stops a thread, removing queues and resetting stats', Thread)
+    Queue = @queue()
+    console.log('Stops a thread, removing queues and resetting stats', Thread. Queue)
     deferred = Q.defer()
     Thread.stop().then( () ->
-      Thread.resetStats().then( () ->
-        Queue.removeQueue().then( () ->
-          Thread.destroy( () ->
-            deferred.resolve()
+      Thread.pauseStats().then( () ->
+        Thread.resetStats().then( () ->
+          Queue.removeQueue().then( () ->
+            Thread.destroy( () ->
+              deferred.resolve()
+            )
           )
         )
       )
@@ -82,11 +105,13 @@ PDQ = (config) ->
   @flush = () ->
     Thread = @thread()
     console.log('Processes the task Queue without doing any work, resetting stats when finished', Thread)
-    Thread.pause().then(
-      Thread.flush().then(
-        Thread.resetStats().then(
-          Thread.start().then(
-            deferred.resolve()
+    Thread.pause().then( () ->
+      Thread.pauseStats().then( () ->
+        Thread.flush().then( () ->
+          Thread.resetStats().then( () ->
+            Thread.start().then( () ->
+              deferred.resolve()
+            )
           )
         )
       )
@@ -95,12 +120,19 @@ PDQ = (config) ->
 
   # Returns stats for the current Thread
   @stats = () ->
-    console.log('Returns stats for the current Thread')
-    Thread.stats()
+    Thread = @thread()
+    console.log('Returns stats for the current Thread', Thread)
+    deferred = Q.defer()
+    Thread.stats().then( (response) ->
+      deferred.resolve(response)
+    )
+    deferred.promise
 
   # Toggles debug mode for Thread and Queue
   @debug = () ->
-    console.log('Returns stats for the current Thread')
+    Queue = @queue()
+    Thread = @thread()
+    console.log('Returns stats for the current Thread', Thread, Queue)
     that = @
     deferred = Q.defer()
     setTimeout(() ->
@@ -112,40 +144,106 @@ PDQ = (config) ->
     )
     deferred.promise
 
-  @work = (message) ->
+  @task = (message) ->
     deferred = Q.defer()
+    Queue = @queue
     Queue.sendMessage(message).then( () ->
       deferred.resolve()
     )
     deferred.promise
 
-# This method returns a Task, a decorated promsie representing a task whose work will
-# be distributed to Threads through a queue
-PDQ::task = (task) ->
+  Job = ((work) ->
 
-  deferred = Q.defer()
-  promise = deferred.promise
+    # The work that will be done
+    @_work = work
 
-  Task = (() ->
-    @work = that.work
-    @start = that.start
-    @pause = that.pause
-    @restart = that.restart
-    @stop = that.stop
-    @flush = that.flush
-    @stats = that.stats
-    @debug = that.debug
-  ).bind(@)
-  Task.prototype = promise.constructor
-  promise.constructor = new Task()
+    # A unique ID for the work that will be done
+    @_id = null
 
-  @queue(Task).then((Queue) ->
-    @thread(Task).then((Thread) ->
-      Queue.sendMessage().then(() ->
-        deferred.resolve()
+    # A method to add work
+    @task = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.task().then( () ->
+          deferred.resolve()
+        )
       )
-    )
-  )
-  return promise
+      deferred.promise
 
-exports = PDQ
+    # A method to start work
+    @start = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.start().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+
+    # A method to pause work
+    @pause = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.pause().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+
+    # A method to start work and reset stats
+    @restart = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.restart().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+    # A method to stop work and destroy any queues
+    @stop = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.stop().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+    # A method to purge any pending work
+    @flush = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.flush().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+    # A method to see how much work an agent is doing
+    @stats = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.stats().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+    # A method to toggle the console.log debug state
+    @debug = () ->
+      deferred = Q.defer()
+      @agent.then(() ->
+        that.debug().then( () ->
+          deferred.resolve()
+        )
+      )
+      deferred.promise
+  ).bind(@)
+
+  Job.prototype = promise.constructor
+  promise.constructor = new Job(fn)
+
+  promise
+
+# Sugar for configuring once instead of per-Agent
+Agent::config = (config) ->
+  @config = config
+
+exports = Agent
